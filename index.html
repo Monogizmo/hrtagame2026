@@ -117,7 +117,7 @@ const LIVE=/^#live/.test(location.hash),KEY=LIVE?'hrta_gm_live':'hrta_gm_v1';let
 const fresh=n=>({id:'s'+Date.now(),name:n,teams:['Team 1','Team 2','Team 3','Team 4'],sc:{flash:[0,0,0,0],syl:[0,0,0,0],word:[0,0,0,0],steal:[0,0,0,0]},log:[],fl:{used:[],pool:'all',cur:null,round:1,rdone:{}},sy:{done:[],sel:null},wd:{st:{},stl:{},cat:null,i:0,step:0}});
 function load(){try{store=JSON.parse(localStorage.getItem(KEY))}catch(e){}if(!store||!store.list||!store.list[store.cur]){const s=fresh('กิจกรรม 1');store={cur:s.id,list:{[s.id]:s}}}S=store.list[store.cur]}
 function ind(t,e){const x=$('#sv');x.textContent=t;x.className='save'+(e?' err':'')}
-function save(){ind('กำลังบันทึก…');try{localStorage.setItem(KEY,JSON.stringify(store));setTimeout(()=>ind(SB?'กำลังซิงก์…':'บันทึกแล้ว ✓'),150)}catch(e){ind('บันทึกไม่สำเร็จ',1)}if(SB){clearTimeout(tmr);tmr=setTimeout(push,250)}}
+function save(){lastSave=Date.now();ind('กำลังบันทึก…');try{localStorage.setItem(KEY,JSON.stringify(store));setTimeout(()=>ind(SB?'กำลังซิงก์…':'บันทึกแล้ว ✓'),150)}catch(e){ind('บันทึกไม่สำเร็จ',1)}if(SB){clearTimeout(tmr);tmr=setTimeout(push,250)}}
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.append(t);setTimeout(()=>t.remove(),2200)}
 function dlg(t,b,btns){const d=document.createElement('div');d.className='ov';d.innerHTML=`<div class="dg"><h3>${t}</h3><div>${b}</div><div class="row end"></div></div>`;btns.forEach(([l,c,f])=>{const e=document.createElement('button');e.textContent=l;e.className='btn '+c;e.onclick=async()=>{if(f&&(await f(d))===false)return;d.remove()};d.querySelector('.end').append(e)});document.body.append(d);return d}
 const ask=m=>new Promise(r=>dlg('ยืนยัน',esc(m),[['ยกเลิก','ghost',()=>r(0)],['ยืนยัน','pri',()=>r(1)]]));
@@ -253,9 +253,10 @@ $('#ses').textContent=S.name}
 /* supabase sync */
 const SB_URL='https://ttauknjxdfdvuydvlfwa.supabase.co',SB_KEY='sb_publishable_EyfjkuNQKZfXqGWS5hvUYQ_o9WDjweL',CID=Math.random().toString(36).slice(2);
 let SB=null;try{SB=window.supabase?supabase.createClient(SB_URL,SB_KEY):null}catch(e){}
-const synced={},need=new Set();let busy=false,again=false,fail=false,tmr;
+const synced={},need=new Set();let lastSave=0,lastSig='',busy=false,again=false,fail=false,tmr;
 const sdata=s=>({name:s.name,teams:s.teams,fl:s.fl,sy:s.sy,wd:s.wd,hide:!!s.hide,by:CID});
 function recalc(s){s.sc={flash:[0,0,0,0],syl:[0,0,0,0],word:[0,0,0,0],steal:[0,0,0,0]};s.log.sort((a,b)=>(a.ts||0)-(b.ts||0));s.log.forEach(e=>s.sc[e.game][e.t]+=e.d)}
+const isNew=s=>{const f=fresh('กิจกรรม 1');return !s.log.length&&s.name==='กิจกรรม 1'&&JSON.stringify([s.teams,s.fl,s.sy,s.wd,!!s.hide])===JSON.stringify([f.teams,f.fl,f.sy,f.wd,false])};
 const mk=(r,log)=>{const s=Object.assign(fresh(r.data.name),r.data,{id:r.id,log});recalc(s);return s};
 async function push(){if(!SB||LIVE)return;if(busy){again=true;return}busy=true;try{
  const up=new Set([S.id,...need]);
@@ -264,15 +265,15 @@ async function push(){if(!SB||LIVE)return;if(busy){again=true;return}busy=true;t
   if(ins.length){const r=await SB.from('gm_log').upsert(ins);if(r.error)throw r.error;ins.forEach(x=>sy.add(x.id))}
   if(del.length){const r=await SB.from('gm_log').delete().in('id',del);if(r.error)throw r.error;del.forEach(i=>sy.delete(i))}}
  need.clear();fail=false;ind('ซิงก์แล้ว ✓')}catch(e){fail=true;ind('ออฟไลน์ · รอซิงก์',1)}busy=false;if(again){again=false;push()}}
-async function pull(){try{const [a,b]=await Promise.all([SB.from('gm_state').select('*'),SB.from('gm_log').select('*').order('ts')]);if(a.error||b.error)throw 0;const cl={};b.data.forEach(r=>(cl[r.sid]=cl[r.sid]||[]).push(r.e));const have=new Set(a.data.map(r=>r.id));
+async function pull(poll){if(poll&&(busy||again||fail||Date.now()-lastSave<4000))return false;try{const [a,b]=await Promise.all([SB.from('gm_state').select('*'),SB.from('gm_log').select('*').order('ts')]);if(a.error||b.error)throw 0;const sg=JSON.stringify([a.data.map(r=>[r.id,r.updated_at]),b.data.map(r=>r.id)]);if(poll&&(sg===lastSig||busy||again||Date.now()-lastSave<4000))return false;lastSig=sg;const cl={};b.data.forEach(r=>(cl[r.sid]=cl[r.sid]||[]).push(r.e));const have=new Set(a.data.map(r=>r.id));
  a.data.forEach(r=>{const s=mk(r,cl[r.id]||[]);store.list[r.id]=s;synced[r.id]=new Set(s.log.map(e=>e.id))});
- if(LIVE&&a.data.length){store.cur=a.data.slice().sort((x,y)=>String(y.updated_at||'')<String(x.updated_at||'')?-1:1)[0].id}
- Object.keys(store.list).forEach(id=>{if(!have.has(id))need.add(id)});if(!store.list[store.cur])store.cur=Object.keys(store.list)[0];S=store.list[store.cur];return true}catch(e){fail=true;ind('ออฟไลน์ · ใช้ข้อมูลในเครื่อง',1);return false}}
+ if(a.data.length){store.cur=a.data.slice().sort((x,y)=>String(y.updated_at||'')<String(x.updated_at||'')?-1:1)[0].id}
+ Object.keys(store.list).forEach(id=>{if(!have.has(id)){if(a.data.length&&isNew(store.list[id])){delete store.list[id];delete synced[id]}else need.add(id)}});if(!store.list[store.cur])store.cur=Object.keys(store.list)[0];S=store.list[store.cur];return true}catch(e){fail=true;ind('ออฟไลน์ · ใช้ข้อมูลในเครื่อง',1);return false}}
 function lite(){if(document.querySelector('.ov')||/INPUT|TEXTAREA|SELECT/.test(document.activeElement&&document.activeElement.tagName))return;render()}
-function rt(){SB.channel('gm').on('postgres_changes',{event:'*',schema:'public',table:'gm_state'},p=>{const r=p.new;if(!r||!r.data||r.data.by===CID)return;const o=store.list[r.id],s=mk(r,o?o.log:[]);store.list[r.id]=s;if(S.id===r.id)S=s;if(LIVE){store.cur=r.id;S=s}try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}lite()})
- .on('postgres_changes',{event:'*',schema:'public',table:'gm_log'},p=>{if(p.eventType==='DELETE'){const id=p.old.id;Object.values(store.list).forEach(s=>{const i=s.log.findIndex(e=>e.id===id);if(i>=0){s.log.splice(i,1);recalc(s)}})}else{const r=p.new,s=store.list[r.sid];if(s&&!s.log.some(e=>e.id===r.id)){s.log.push(r.e);recalc(s)}if(LIVE&&s){store.cur=r.sid;S=s}if(synced[r.sid])synced[r.sid].add(r.id)}try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}lite()})
+function rt(){SB.channel('gm').on('postgres_changes',{event:'*',schema:'public',table:'gm_state'},p=>{const r=p.new;if(!r||!r.data||r.data.by===CID)return;const o=store.list[r.id],s=mk(r,o?o.log:[]);store.list[r.id]=s;store.cur=r.id;S=s;try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}lite()})
+ .on('postgres_changes',{event:'*',schema:'public',table:'gm_log'},p=>{if(p.eventType==='DELETE'){const id=p.old.id;Object.values(store.list).forEach(s=>{const i=s.log.findIndex(e=>e.id===id);if(i>=0){s.log.splice(i,1);recalc(s)}})}else{const r=p.new,s=store.list[r.sid];if(s&&!s.log.some(e=>e.id===r.id)){s.log.push(r.e);recalc(s);store.cur=r.sid;S=s}if(synced[r.sid])synced[r.sid].add(r.id)}try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}lite()})
  .subscribe(st=>{if(st==='SUBSCRIBED')ind('ซิงก์แล้ว ✓ · realtime')})}
-async function init(){if(await pull()){rt();render()}await push();if(LIVE)setInterval(async()=>{if(await pull())lite()},10000);setInterval(()=>{if(fail)push()},8000);addEventListener('online',async()=>{await push();await pull();lite()})}
+async function init(){if(await pull()){rt();render()}await push();setInterval(async()=>{if(await pull(true))lite()},6000);setInterval(()=>{if(fail)push()},8000);addEventListener('online',async()=>{await push();await pull();lite()})}
 if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 if(LIVE)wake();load();render();if(SB){ind('กำลังเชื่อมต่อ…');init()}else ind('โหมดในเครื่อง (ไม่มี Supabase)',1);
 
